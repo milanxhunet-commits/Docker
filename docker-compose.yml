@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # CONTAINER 1: DATABASE (PostgreSQL)
+  # ============================================
+  database:
+    image: postgres:16-alpine
+    container_name: shlink_database
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-shlink}
+      POSTGRES_USER: ${DB_USER:-shlink}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-shlink_secret_pass}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - shlink_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-shlink} -d ${DB_NAME:-shlink}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+
+  # ============================================
+  # CONTAINER 2: API (Shlink Backend)
+  # ============================================
+  api:
+    image: shlinkio/shlink:stable
+    container_name: shlink_api
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      # Database connection
+      DB_DRIVER: postgres
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-shlink}
+      DB_USER: ${DB_USER:-shlink}
+      DB_PASSWORD: ${DB_PASSWORD:-shlink_secret_pass}
+      # Shlink configuration
+      DEFAULT_DOMAIN: ${DEFAULT_DOMAIN:-localhost}
+      IS_HTTPS_ENABLED: ${IS_HTTPS_ENABLED:-false}
+      GEOLITE_LICENSE_KEY: ${GEOLITE_LICENSE_KEY:-}
+      # Initial API key (auto-generated if empty)
+      INITIAL_API_KEY: ${INITIAL_API_KEY:-my-super-secret-api-key}
+      # Timezone
+      TIMEZONE: Europe/Tirane
+      # Short URL settings
+      SHORT_URL_UNIQUE_VISITS_THRESHOLD: 10
+      TRACK_ORPHAN_VISITS: "true"
+      # Worker settings
+      WEB_WORKER_NUM: 2
+      TASK_WORKER_NUM: 2
+    networks:
+      - shlink_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/rest/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    ports:
+      - "8080:8080"
+
+  # ============================================
+  # CONTAINER 3: WEB (Shlink Web Client + Nginx)
+  # ============================================
+  web:
+    image: shlinkio/shlink-web-client:stable
+    container_name: shlink_web
+    restart: unless-stopped
+   
+    depends_on:
+      - api
+    environment:
+      SHLINK_SERVER_URL: http://localhost:8080
+    networks:
+      - shlink_network
+    ports:
+      - "3000:8080"
+
+# ============================================
+# VOLUMES & NETWORKS
+# ============================================
+volumes:
+  db_data:
+    name: shlink_db_data
+
+networks:
+  shlink_network:
+    name: shlink_network
+    driver: bridge
+
